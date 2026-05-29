@@ -5,8 +5,7 @@ A test-ready HVAC price comparison system with a FastAPI backend and a Next.js v
 ## Features
 
 - Upload Excel, CSV, TSV, and PDF price sheets
-- Rule-based parser for clean files
-- Optional OpenAI or local Ollama assisted normalization for messy files
+- Three selectable price analysis channels: rules parser, OpenAI, and local Ollama
 - Import preview with confidence, errors, valid rows, and skipped rows
 - Automatic creation of price items and vendor quotes
 - Dashboard with min, average, max, and quote counts
@@ -35,21 +34,25 @@ npm run dev
 Open:
 
 - App: http://localhost:3000
+- Import page: http://localhost:3000/import
 - API docs: http://localhost:8000/docs
 
-## AI Import Options
+## Price Analysis Channels
 
-The importer always starts with deterministic column and price detection. For messy Excel/PDF files, you can add an AI cleanup step.
+The import page lets you choose one of three channels for every upload:
 
-### Option A: OpenAI
+- `Rules parser`: deterministic column and price detection. No AI service required.
+- `Local Ollama`: sends the parsed rows to a local Ollama model for cleanup.
+- `OpenAI`: sends the parsed rows to OpenAI for structured cleanup.
+
+### OpenAI Setup
 
 ```bash
-AI_PROVIDER=openai
 OPENAI_API_KEY=your_key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-### Option B: Local Ollama
+### Local Ollama Setup
 
 Install Ollama, start it, and pull a model:
 
@@ -60,19 +63,19 @@ ollama pull qwen2.5:7b
 Then set backend environment variables:
 
 ```bash
-AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 OLLAMA_TIMEOUT=120
 ```
 
-`AI_PROVIDER=auto` uses OpenAI when `OPENAI_API_KEY` is present, otherwise it uses Ollama when `OLLAMA_MODEL` is set. Without either, the importer still works using deterministic column detection.
+`AI_PROVIDER` can still be used as a backend default for API callers that do not send a channel, but the web UI now sends `rules`, `openai`, or `ollama` explicitly with each upload.
 
 ## Test Workflow
 
 1. Start backend and frontend.
 2. Open `/import`.
-3. Upload an `.xlsx`, `.csv`, `.tsv`, or `.pdf` vendor price sheet.
-4. Review parsed rows and errors.
-5. Turn on `Import valid rows` and upload again to write data into the system.
-6. Return to dashboard to compare prices.
+3. Select `Rules parser`, `Local Ollama`, or `OpenAI`.
+4. Upload an `.xlsx`, `.csv`, `.tsv`, or `.pdf` vendor price sheet.
+5. Review parsed rows and errors.
+6. Turn on `Import valid rows` and upload again to write data into the system.
+7. Return to dashboard to compare prices.
