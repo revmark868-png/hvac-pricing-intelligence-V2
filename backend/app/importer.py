@@ -3,6 +3,8 @@ import io
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -232,63 +234,119 @@ def parse_pdf(content: bytes) -> ParsedTable:
     return choose_header(rows)
 
 
-def ai_normalize_rows(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str) -> tuple[list[PriceImportRow], bool]:
-    if not os.getenv("OPENAI_API_KEY") or not rows:
-        return rows, False
+def ai_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "row_number": {"type": "integer"},
+                        "sku": {"type": ["string", "null"]},
+                        "name": {"type": "string"},
+                        "category": {"type": "string", "enum": ["equipment", "material", "labor", "subcontractor", "other"]},
+                        "brand": {"type": ["string", "null"]},
+                        "unit": {"type": "string"},
+                        "vendor": {"type": "string"},
+                        "region": {"type": "string"},
+                        "unit_cost": {"type": ["number", "null"]},
+                        "lead_time_days": {"type": ["integer", "null"]},
+                        "quote_date": {"type": "string"},
+                        "notes": {"type": ["string", "null"]},
+                        "confidence": {"type": "number"},
+                        "errors": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["row_number", "sku", "name", "category", "brand", "unit", "vendor", "region", "unit_cost", "lead_time_days", "quote_date", "notes", "confidence", "errors"],
+                },
+            }
+        },
+        "required": ["rows"],
+    }
 
+
+def ai_prompt(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str) -> str:
+    payload = [row.model_dump(mode="json") for row in rows[:200]]
+    return (
+        "Normalize HVAC vendor price rows into clean JSON. Keep prices numeric. "
+        "Use defaults when missing: vendor=" + default_vendor + ", region=" + default_region + ". "
+        "Return only rows that look like price records. Source file: " + source + "\n\n" + json.dumps(payload, ensure_ascii=False)
+    )
+
+
+def rows_from_ai_json(text: str, source: str) -> list[PriceImportRow]:
+    data = json.loads(text)
+    normalized = []
+    for item in data.get("rows", []):
+        item["quote_date"] = parse_date(str(item.get("quote_date") or ""))
+        normalized.append(PriceImportRow(**item, source=source))
+    return normalized
+
+
+def normalize_with_openai(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str) -> tuple[list[PriceImportRow], bool]:
+    if not os.getenv("OPENAI_API_KEY"):
+        return rows, False
     try:
         from openai import OpenAI
 
         client = OpenAI()
-        payload = [row.model_dump(mode="json") for row in rows[:200]]
-        schema = {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "row_number": {"type": "integer"},
-                            "sku": {"type": ["string", "null"]},
-                            "name": {"type": "string"},
-                            "category": {"type": "string", "enum": ["equipment", "material", "labor", "subcontractor", "other"]},
-                            "brand": {"type": ["string", "null"]},
-                            "unit": {"type": "string"},
-                            "vendor": {"type": "string"},
-                            "region": {"type": "string"},
-                            "unit_cost": {"type": ["number", "null"]},
-                            "lead_time_days": {"type": ["integer", "null"]},
-                            "quote_date": {"type": "string"},
-                            "notes": {"type": ["string", "null"]},
-                            "confidence": {"type": "number"},
-                            "errors": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["row_number", "sku", "name", "category", "brand", "unit", "vendor", "region", "unit_cost", "lead_time_days", "quote_date", "notes", "confidence", "errors"],
-                    },
-                }
-            },
-            "required": ["rows"],
-        }
         response = client.responses.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            input=(
-                "Normalize HVAC vendor price rows into clean JSON. Keep prices numeric. "
-                "Use defaults when missing: vendor=" + default_vendor + ", region=" + default_region + ". "
-                "Return only rows that look like price records. Source file: " + source + "\n\n" + json.dumps(payload, ensure_ascii=False)
-            ),
-            text={"format": {"type": "json_schema", "name": "hvac_price_rows", "schema": schema, "strict": True}},
+            input=ai_prompt(rows, default_vendor, default_region, source),
+            text={"format": {"type": "json_schema", "name": "hvac_price_rows", "schema": ai_schema(), "strict": True}},
         )
-        data = json.loads(response.output_text)
-        normalized = []
-        for item in data.get("rows", []):
-            item["quote_date"] = parse_date(str(item.get("quote_date") or ""))
-            normalized.append(PriceImportRow(**item, source=source))
-        return normalized or rows, True
+        normalized = rows_from_ai_json(response.output_text, source)
+        return normalized or rows, bool(normalized)
     except Exception:
         return rows, False
+
+
+def normalize_with_ollama(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str) -> tuple[list[PriceImportRow], bool]:
+    model = os.getenv("OLLAMA_MODEL")
+    if not model:
+        return rows, False
+
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    url = f"{base_url}/generate" if base_url.endswith("/api") else f"{base_url}/api/generate"
+    body = {
+        "model": model,
+        "system": "You clean HVAC price sheets and return strict JSON only.",
+        "prompt": ai_prompt(rows, default_vendor, default_region, source),
+        "stream": False,
+        "format": ai_schema(),
+        "options": {"temperature": 0},
+    }
+
+    try:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=int(os.getenv("OLLAMA_TIMEOUT", "120"))) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        normalized = rows_from_ai_json(data.get("response", "{}"), source)
+        return normalized or rows, bool(normalized)
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError):
+        return rows, False
+
+
+def ai_normalize_rows(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str) -> tuple[list[PriceImportRow], bool]:
+    if not rows:
+        return rows, False
+
+    provider = os.getenv("AI_PROVIDER", "auto").lower()
+    if provider in {"openai", "auto"}:
+        normalized, used = normalize_with_openai(rows, default_vendor, default_region, source)
+        if used or provider == "openai":
+            return normalized, used
+    if provider in {"ollama", "local", "auto"}:
+        return normalize_with_ollama(rows, default_vendor, default_region, source)
+    return rows, False
 
 
 def parse_price_file(filename: str, content: bytes, default_vendor: str = "Imported", default_region: str = "default") -> tuple[list[PriceImportRow], bool]:
