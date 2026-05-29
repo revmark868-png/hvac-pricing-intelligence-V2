@@ -132,6 +132,7 @@ async def import_prices(
     file: UploadFile = File(...),
     vendor: str = Form("Imported"),
     region: str = Form("default"),
+    ai_provider: str = Form("rules"),
     commit: bool = Form(False),
     db: Session = Depends(get_db),
 ):
@@ -140,7 +141,7 @@ async def import_prices(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        rows, ai_used = parse_price_file(file.filename or "upload", content, vendor, region)
+        rows, ai_used, provider_used = parse_price_file(file.filename or "upload", content, vendor, region, ai_provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -153,6 +154,7 @@ async def import_prices(
         filename=file.filename or "upload",
         imported=commit,
         ai_used=ai_used,
+        ai_provider=provider_used,
         total_rows=len(rows),
         valid_rows=len(valid_rows),
         invalid_rows=len(rows) - len(valid_rows),
