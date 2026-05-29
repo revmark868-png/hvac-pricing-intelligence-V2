@@ -6,6 +6,8 @@ import { useMemo, useState } from 'react'
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8000'
 
+type AnalysisChannel = 'rules' | 'openai' | 'ollama'
+
 type ImportRow = {
   row_number: number
   sku: string | null
@@ -24,6 +26,7 @@ type ImportResult = {
   filename: string
   imported: boolean
   ai_used: boolean
+  ai_provider: string
   total_rows: number
   valid_rows: number
   invalid_rows: number
@@ -31,6 +34,12 @@ type ImportResult = {
   created_quotes: number
   skipped_rows: number
   rows: ImportRow[]
+}
+
+const channelLabels: Record<string, string> = {
+  rules: 'Rules',
+  openai: 'OpenAI',
+  ollama: 'Ollama',
 }
 
 function money(value: number | null | undefined) {
@@ -42,6 +51,7 @@ export default function ImportPage() {
   const [file, setFile] = useState<File | null>(null)
   const [vendor, setVendor] = useState('Imported Vendor')
   const [region, setRegion] = useState('DFW')
+  const [analysisChannel, setAnalysisChannel] = useState<AnalysisChannel>('rules')
   const [commit, setCommit] = useState(false)
   const [status, setStatus] = useState('Choose a price sheet to preview or import.')
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -53,6 +63,7 @@ export default function ImportPage() {
     form.append('file', file)
     form.append('vendor', vendor)
     form.append('region', region)
+    form.append('ai_provider', analysisChannel)
     form.append('commit', String(commit))
 
     const res = await fetch(`${apiBase}/imports/prices`, { method: 'POST', body: form })
@@ -93,6 +104,14 @@ export default function ImportPage() {
           <div className="form-grid">
             <label><span>Default vendor</span><input value={vendor} onChange={(event) => setVendor(event.target.value)} /></label>
             <label><span>Default region</span><input value={region} onChange={(event) => setRegion(event.target.value)} /></label>
+            <label>
+              <span>Price analysis channel</span>
+              <select value={analysisChannel} onChange={(event) => setAnalysisChannel(event.target.value as AnalysisChannel)}>
+                <option value="rules">Rules parser</option>
+                <option value="ollama">Local Ollama</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
           </div>
           <label className="toggle">
             <input type="checkbox" checked={commit} onChange={(event) => setCommit(event.target.checked)} />
@@ -110,6 +129,7 @@ export default function ImportPage() {
             <div><span>Rows</span><strong>{result?.total_rows ?? 0}</strong></div>
             <div><span>Valid</span><strong>{result?.valid_rows ?? 0}</strong></div>
             <div><span>Invalid</span><strong>{result?.invalid_rows ?? 0}</strong></div>
+            <div><span>Channel</span><strong>{channelLabels[result?.ai_provider ?? analysisChannel] ?? result?.ai_provider ?? 'Rules'}</strong></div>
             <div><span>AI used</span><strong>{result?.ai_used ? 'Yes' : 'No'}</strong></div>
             <div><span>Average</span><strong>{money(stats.avg)}</strong></div>
             <div><span>Min / Max</span><strong>{money(stats.min)} / {money(stats.max)}</strong></div>
