@@ -1,0 +1,158 @@
+'use client'
+
+import Link from 'next/link'
+import { ArrowLeft, CheckCircle2, FileUp, Wand2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
+
+const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8000'
+
+type ImportRow = {
+  row_number: number
+  sku: string | null
+  name: string
+  category: string
+  brand: string | null
+  unit: string
+  vendor: string
+  region: string
+  unit_cost: number | null
+  confidence: number
+  errors: string[]
+}
+
+type ImportResult = {
+  filename: string
+  imported: boolean
+  ai_used: boolean
+  total_rows: number
+  valid_rows: number
+  invalid_rows: number
+  created_items: number
+  created_quotes: number
+  skipped_rows: number
+  rows: ImportRow[]
+}
+
+function money(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '-'
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
+}
+
+export default function ImportPage() {
+  const [file, setFile] = useState<File | null>(null)
+  const [vendor, setVendor] = useState('Imported Vendor')
+  const [region, setRegion] = useState('DFW')
+  const [commit, setCommit] = useState(false)
+  const [status, setStatus] = useState('Choose a price sheet to preview or import.')
+  const [result, setResult] = useState<ImportResult | null>(null)
+
+  async function upload() {
+    if (!file) return
+    setStatus(commit ? 'Importing valid rows' : 'Parsing preview')
+    const form = new FormData()
+    form.append('file', file)
+    form.append('vendor', vendor)
+    form.append('region', region)
+    form.append('commit', String(commit))
+
+    const res = await fetch(`${apiBase}/imports/prices`, { method: 'POST', body: form })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Import failed')
+    setResult(data)
+    setStatus(data.imported ? `Imported ${data.created_quotes} quotes` : `Previewed ${data.total_rows} rows`)
+  }
+
+  const stats = useMemo(() => {
+    const rows = result?.rows ?? []
+    const prices = rows.filter((row) => row.unit_cost != null).map((row) => row.unit_cost!)
+    const avg = prices.reduce((sum, price) => sum + price, 0) / Math.max(prices.length, 1)
+    return { avg, max: prices.length ? Math.max(...prices) : null, min: prices.length ? Math.min(...prices) : null }
+  }, [result])
+
+  return (
+    <main className="shell">
+      <header className="topbar">
+        <div>
+          <h1>AI Price Import</h1>
+          <p>Upload Excel, CSV, TSV, or PDF price sheets and normalize them into quote records.</p>
+        </div>
+        <Link className="button secondary" href="/">
+          <ArrowLeft size={18} /> Dashboard
+        </Link>
+      </header>
+
+      <section className="import-layout">
+        <div className="panel">
+          <h2>Upload</h2>
+          <label className="dropzone">
+            <FileUp size={38} />
+            <strong>{file?.name || 'Select vendor price sheet'}</strong>
+            <span>.xlsx, .csv, .tsv, .pdf</span>
+            <input type="file" accept=".xlsx,.xlsm,.xltx,.xltm,.csv,.tsv,.pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+          </label>
+          <div className="form-grid">
+            <label><span>Default vendor</span><input value={vendor} onChange={(event) => setVendor(event.target.value)} /></label>
+            <label><span>Default region</span><input value={region} onChange={(event) => setRegion(event.target.value)} /></label>
+          </div>
+          <label className="toggle">
+            <input type="checkbox" checked={commit} onChange={(event) => setCommit(event.target.checked)} />
+            <span>Import valid rows into price comparison system</span>
+          </label>
+          <button className="button primary wide" disabled={!file} onClick={() => upload().catch((error) => setStatus(error.message))}>
+            <Wand2 size={18} /> {commit ? 'Parse and Import' : 'Preview Import'}
+          </button>
+          <p className="status">{status}</p>
+        </div>
+
+        <div className="panel">
+          <h2>Import Summary</h2>
+          <div className="summary-grid">
+            <div><span>Rows</span><strong>{result?.total_rows ?? 0}</strong></div>
+            <div><span>Valid</span><strong>{result?.valid_rows ?? 0}</strong></div>
+            <div><span>Invalid</span><strong>{result?.invalid_rows ?? 0}</strong></div>
+            <div><span>AI used</span><strong>{result?.ai_used ? 'Yes' : 'No'}</strong></div>
+            <div><span>Average</span><strong>{money(stats.avg)}</strong></div>
+            <div><span>Min / Max</span><strong>{money(stats.min)} / {money(stats.max)}</strong></div>
+          </div>
+          {result?.imported && (
+            <div className="success"><CheckCircle2 size={18} /> Created {result.created_items} items and {result.created_quotes} quotes.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="panel table-panel">
+        <div className="panel-head">
+          <div>
+            <h2>Normalized Rows</h2>
+            <p>{result ? result.filename : 'No file parsed yet'}</p>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Row</th><th>SKU</th><th>Name</th><th>Category</th><th>Brand</th><th>Vendor</th><th>Price</th><th>Confidence</th><th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(result?.rows ?? []).map((row) => (
+                <tr key={row.row_number} className={row.errors.length ? 'bad-row' : ''}>
+                  <td>{row.row_number}</td>
+                  <td>{row.sku || '-'}</td>
+                  <td><strong>{row.name || '-'}</strong><span>{row.unit}</span></td>
+                  <td>{row.category}</td>
+                  <td>{row.brand || '-'}</td>
+                  <td>{row.vendor}</td>
+                  <td>{money(row.unit_cost)}</td>
+                  <td>{Math.round(row.confidence * 100)}%</td>
+                  <td>{row.errors.join(', ') || '-'}</td>
+                </tr>
+              ))}
+              {!result && <tr><td colSpan={9}>Parsed rows will appear here.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  )
+}
