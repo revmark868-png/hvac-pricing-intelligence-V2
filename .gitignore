@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+hvac_pricing.db
+.env
+node_modules/
+.next/
+out/
+.DS_Store
