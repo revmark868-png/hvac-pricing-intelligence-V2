@@ -335,21 +335,37 @@ def normalize_with_ollama(rows: list[PriceImportRow], default_vendor: str, defau
         return rows, False
 
 
-def ai_normalize_rows(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str) -> tuple[list[PriceImportRow], bool]:
+def normalize_provider(provider: str | None) -> str:
+    selected = (provider or os.getenv("AI_PROVIDER", "rules")).strip().lower()
+    aliases = {"rule": "rules", "deterministic": "rules", "none": "rules", "local": "ollama"}
+    selected = aliases.get(selected, selected)
+    return selected if selected in {"rules", "openai", "ollama", "auto"} else "rules"
+
+
+def ai_normalize_rows(rows: list[PriceImportRow], default_vendor: str, default_region: str, source: str, provider: str | None = None) -> tuple[list[PriceImportRow], bool, str]:
     if not rows:
-        return rows, False
+        return rows, False, normalize_provider(provider)
 
-    provider = os.getenv("AI_PROVIDER", "auto").lower()
-    if provider in {"openai", "auto"}:
+    selected = normalize_provider(provider)
+    if selected == "rules":
+        return rows, False, "rules"
+
+    if selected == "openai":
         normalized, used = normalize_with_openai(rows, default_vendor, default_region, source)
-        if used or provider == "openai":
-            return normalized, used
-    if provider in {"ollama", "local", "auto"}:
-        return normalize_with_ollama(rows, default_vendor, default_region, source)
-    return rows, False
+        return normalized, used, "openai"
+
+    if selected == "ollama":
+        normalized, used = normalize_with_ollama(rows, default_vendor, default_region, source)
+        return normalized, used, "ollama"
+
+    normalized, used = normalize_with_openai(rows, default_vendor, default_region, source)
+    if used:
+        return normalized, True, "openai"
+    normalized, used = normalize_with_ollama(rows, default_vendor, default_region, source)
+    return normalized, used, "ollama" if used else "rules"
 
 
-def parse_price_file(filename: str, content: bytes, default_vendor: str = "Imported", default_region: str = "default") -> tuple[list[PriceImportRow], bool]:
+def parse_price_file(filename: str, content: bytes, default_vendor: str = "Imported", default_region: str = "default", ai_provider: str | None = None) -> tuple[list[PriceImportRow], bool, str]:
     extension = Path(filename).suffix.lower()
     if extension == ".csv":
         table = parse_csv_like(content, ",")
@@ -363,7 +379,7 @@ def parse_price_file(filename: str, content: bytes, default_vendor: str = "Impor
         raise ValueError("Unsupported file type. Upload .xlsx, .csv, .tsv, or .pdf.")
 
     rows = table_to_rows(table, default_vendor, default_region, filename)
-    return ai_normalize_rows(rows, default_vendor, default_region, filename)
+    return ai_normalize_rows(rows, default_vendor, default_region, filename, ai_provider)
 
 
 def import_rows(db: Session, rows: list[PriceImportRow]) -> dict[str, int]:
