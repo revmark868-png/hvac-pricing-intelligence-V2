@@ -95,6 +95,7 @@ class PriceImportResult(BaseModel):
     filename: str
     imported: bool
     ai_used: bool
+    ai_provider: str = "rules"
     total_rows: int
     valid_rows: int
     invalid_rows: int
