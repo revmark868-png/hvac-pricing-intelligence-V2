@@ -1,0 +1,69 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f7f9;
+  --ink: #17212b;
+  --muted: #627080;
+  --line: #d8e0e7;
+  --panel: #ffffff;
+  --accent: #0f766e;
+  --accent-dark: #115e59;
+  --danger: #b42318;
+  --success: #157f3b;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+a { color: inherit; }
+
+.shell { min-height: 100vh; padding: 24px; }
+.topbar { align-items: center; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding-bottom: 16px; }
+.topbar h1 { font-size: 25px; margin: 0; }
+.topbar p, .panel-head p { color: var(--muted); margin: 4px 0 0; }
+.actions { display: flex; gap: 8px; }
+
+.button, .icon-button, .search button { align-items: center; border: 0; border-radius: 6px; display: inline-flex; gap: 8px; justify-content: center; min-height: 40px; padding: 9px 13px; text-decoration: none; white-space: nowrap; }
+.primary, .search button { background: var(--accent); color: white; }
+.primary:hover, .search button:hover { background: var(--accent-dark); }
+.secondary, .icon-button { background: white; border: 1px solid var(--line); color: var(--ink); }
+.wide { margin-top: 12px; width: 100%; }
+.button:disabled { cursor: not-allowed; opacity: .55; }
+
+.metrics { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
+.metric, .summary-grid div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 13px; }
+.metric span, .summary-grid span, label span { color: var(--muted); display: block; font-size: 12px; }
+.metric strong, .summary-grid strong { display: block; font-size: 21px; margin-top: 5px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.panel h2 { font-size: 17px; margin: 0 0 12px; }
+.panel-head { align-items: center; display: flex; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.table-panel { overflow: hidden; }
+.table-wrap { overflow: auto; }
+table { border-collapse: collapse; min-width: 920px; width: 100%; }
+th, td { border-bottom: 1px solid var(--line); font-size: 14px; padding: 11px 9px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-size: 12px; font-weight: 700; }
+td span { color: var(--muted); display: block; font-size: 12px; margin-top: 3px; }
+.bad-row td { background: #fff7f5; }
+
+.search { align-items: center; border: 1px solid var(--line); border-radius: 7px; display: flex; gap: 8px; min-width: min(480px, 100%); padding: 4px 4px 4px 10px; }
+.search input { border: 0; flex: 1; min-width: 160px; outline: 0; }
+
+.import-layout { display: grid; gap: 16px; grid-template-columns: minmax(320px, .85fr) minmax(0, 1.15fr); margin-bottom: 16px; }
+.dropzone { align-items: center; border: 1px dashed var(--accent); border-radius: 8px; cursor: pointer; display: grid; gap: 8px; justify-items: center; min-height: 190px; padding: 24px; text-align: center; }
+.dropzone span { color: var(--muted); font-size: 13px; }
+.dropzone input { height: 1px; opacity: 0; position: absolute; width: 1px; }
+.form-grid { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
+.form-grid input { border: 1px solid var(--line); border-radius: 6px; min-height: 39px; padding: 8px 10px; width: 100%; }
+.toggle { align-items: center; display: flex; gap: 8px; margin-top: 12px; }
+.toggle input { height: 18px; width: 18px; }
+.status { color: var(--muted); font-size: 13px; min-height: 18px; }
+.summary-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.success { align-items: center; color: var(--success); display: flex; gap: 8px; margin-top: 12px; }
+
+@media (max-width: 920px) {
+  .shell { padding: 14px; }
+  .topbar, .panel-head { align-items: flex-start; flex-direction: column; }
+  .metrics, .import-layout, .form-grid, .summary-grid { grid-template-columns: 1fr; }
+  .actions, .button, .icon-button, .search { width: 100%; }
+}
