@@ -18,6 +18,7 @@ type ImportRow = {
   vendor: string
   region: string
   unit_cost: number | null
+  source: string | null
   confidence: number
   errors: string[]
 }
@@ -162,8 +163,8 @@ export default function ImportPage() {
               </tr>
             </thead>
             <tbody>
-              {(result?.rows ?? []).map((row) => (
-                <tr key={row.row_number} className={row.errors.length ? 'bad-row' : ''}>
+              {(result?.rows ?? []).map((row, index) => (
+                <tr key={`${row.source ?? result?.filename ?? 'upload'}-${row.row_number}-${index}`} className={row.errors.length ? 'bad-row' : ''}>
                   <td>{row.row_number}</td>
                   <td>{row.sku || '-'}</td>
                   <td><strong>{row.name || '-'}</strong><span>{row.unit}</span></td>
