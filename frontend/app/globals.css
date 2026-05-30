@@ -40,7 +40,7 @@ a { color: inherit; }
 .panel-head { align-items: center; display: flex; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .table-panel { overflow: hidden; }
 .table-wrap { overflow: auto; }
-table { border-collapse: collapse; min-width: 920px; width: 100%; }
+table { border-collapse: collapse; min-width: 1040px; width: 100%; }
 th, td { border-bottom: 1px solid var(--line); font-size: 14px; padding: 11px 9px; text-align: left; vertical-align: top; }
 th { color: var(--muted); font-size: 12px; font-weight: 700; }
 td span { color: var(--muted); display: block; font-size: 12px; margin-top: 3px; }
@@ -61,7 +61,7 @@ td span { color: var(--muted); display: block; font-size: 12px; margin-top: 3px;
 .summary-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .success { align-items: center; color: var(--success); display: flex; gap: 8px; margin-top: 12px; }
 .insight-strip { align-items: flex-start; background: #edf8f5; border: 1px solid #b8dfd6; border-radius: 8px; color: var(--accent-dark); display: flex; gap: 9px; line-height: 1.45; margin-top: 12px; padding: 11px; }
-.analysis-grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr 1fr; margin-bottom: 16px; }
+.analysis-grid { display: grid; gap: 16px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
 .compact-head { margin-bottom: 10px; }
 .compact-head h2 { margin-bottom: 0; }
 .bar-list { display: grid; gap: 10px; }
@@ -76,6 +76,11 @@ td span { color: var(--muted); display: block; font-size: 12px; margin-top: 3px;
 .price-extremes span { color: var(--muted); display: block; font-size: 12px; margin-bottom: 8px; }
 .price-extremes strong { display: flex; font-size: 13px; gap: 8px; justify-content: space-between; line-height: 1.35; margin-top: 7px; }
 .price-extremes em { color: var(--accent-dark); font-style: normal; white-space: nowrap; }
+.tier-pill { border: 1px solid var(--line); border-radius: 999px; display: inline-flex; font-size: 12px; font-weight: 700; margin-top: 0; padding: 4px 8px; white-space: nowrap; }
+.tier-distributor { background: #edf8f5; border-color: #b8dfd6; color: #115e59; }
+.tier-contractor { background: #eef4ff; border-color: #c7d7fe; color: #1d4ed8; }
+.tier-ecommerce { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+.tier-manufacturer { background: #f5f3ff; border-color: #ddd6fe; color: #6d28d9; }
 
 @media (max-width: 920px) {
   .shell { padding: 14px; }

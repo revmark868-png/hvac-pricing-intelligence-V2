@@ -29,6 +29,53 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "quote_date": ["date", "quote date", "effective", "有效期", "日期"],
 }
 
+PRICE_TIERS = {"distributor", "contractor", "ecommerce", "manufacturer"}
+
+PRICE_COLUMN_HINTS = [
+    "price",
+    "cost",
+    "net",
+    "amount",
+    "报价",
+    "价格",
+    "单价",
+    "售价",
+    "成本",
+    "distributor",
+    "dealer",
+    "contractor",
+    "ecommerce",
+    "e commerce",
+    "manufacturer",
+    "factory",
+    "msrp",
+    "list",
+    "wholesale",
+]
+
+PRICE_COLUMN_EXCLUDES = [
+    "diff",
+    "difference",
+    "variance",
+    "delta",
+    "margin",
+    "profit",
+    "markup",
+    "vs",
+    "%",
+    "差异",
+    "差额",
+    "毛利",
+    "利润",
+]
+
+TIER_HINTS: dict[str, list[str]] = {
+    "distributor": ["distributor", "dealer", "supplier", "wholesale", "distribution", "州价格", "经销", "分销", "批发"],
+    "contractor": ["contractor", "installer", "trade", "pro price", "承包商", "安装商", "工程商"],
+    "ecommerce": ["ecommerce", "e commerce", "e-commerce", "online", "web", "website", "amazon", "shop", "sales price", "retail", "售价", "电商", "线上", "网店"],
+    "manufacturer": ["manufacturer", "mfg", "factory", "msrp", "list price", "factory price", "厂家", "工厂", "出厂", "指导价"],
+}
+
 CATEGORY_HINTS = {
     "labor": ["labor", "install", "service", "hour", "工时", "人工", "安装"],
     "material": ["refrigerant", "copper", "line set", "filter", "pad", "wire", "材料", "冷媒", "铜管"],
@@ -36,6 +83,7 @@ CATEGORY_HINTS = {
 }
 
 PRICE_RE = re.compile(r"(?<![A-Za-z0-9])[$¥￥]?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.([0-9]{1,4}))?(?![A-Za-z0-9])")
+MAX_REASONABLE_PRICE = 500000
 
 
 @dataclass
@@ -53,15 +101,47 @@ def compact(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", value.lower()).strip()
 
 
+def normalize_price_tier(value: str | None) -> str:
+    tier = compact(value or "").replace(" ", "_")
+    aliases = {
+        "auto": "auto",
+        "distribution": "distributor",
+        "dealer": "distributor",
+        "supplier": "distributor",
+        "contract": "contractor",
+        "e_commerce": "ecommerce",
+        "online": "ecommerce",
+        "retail": "ecommerce",
+        "mfg": "manufacturer",
+        "factory": "manufacturer",
+    }
+    tier = aliases.get(tier, tier)
+    return tier if tier in PRICE_TIERS or tier == "auto" else "distributor"
+
+
+def infer_price_tier(*values: str, default_tier: str = "auto") -> str:
+    text = compact(" ".join(values))
+    for tier, hints in TIER_HINTS.items():
+        if any(compact(hint) in text for hint in hints):
+            return tier
+    normalized_default = normalize_price_tier(default_tier)
+    return "distributor" if normalized_default == "auto" else normalized_default
+
+
 def parse_price(value: str) -> float | None:
+    text = normalize(value).replace(",", "").replace("$", "").replace("¥", "").replace("￥", "").strip()
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", text):
+        number = float(text)
+        return round(number, 2) if 0 <= number <= MAX_REASONABLE_PRICE else None
+
     candidates: list[float] = []
     for match in PRICE_RE.finditer((value or "").replace(" ", "")):
         whole = match.group(1).replace(",", "")
         decimal = match.group(2) or ""
         try:
             number = float(f"{whole}.{decimal}" if decimal else whole)
-            if number >= 0:
-                candidates.append(number)
+            if 0 <= number <= MAX_REASONABLE_PRICE:
+                candidates.append(round(number, 2))
         except ValueError:
             continue
     return max(candidates) if candidates else None
@@ -193,12 +273,34 @@ def detect_mapping(headers: list[str], rows: list[list[str]]) -> dict[str, int |
     return mapping
 
 
+def detect_price_columns(headers: list[str], rows: list[list[str]], mapping: dict[str, int | None]) -> list[int]:
+    candidates: list[tuple[int, int]] = []
+    for index, header in enumerate(headers):
+        normalized_header = compact(header)
+        if not normalized_header:
+            continue
+        if any(exclude in normalized_header for exclude in PRICE_COLUMN_EXCLUDES):
+            continue
+        hint_score = sum(1 for hint in PRICE_COLUMN_HINTS if compact(hint) in normalized_header)
+        if not hint_score:
+            continue
+        numeric_count = sum(1 for row in rows[:40] if index < len(row) and parse_price(row[index]) is not None)
+        if numeric_count:
+            candidates.append((hint_score * 100 + numeric_count, index))
+
+    if not candidates and mapping["unit_cost"] is not None:
+        return [mapping["unit_cost"]]
+
+    ordered_indexes = [index for _, index in sorted(candidates, reverse=True)]
+    return list(dict.fromkeys(ordered_indexes))
+
+
 def dedupe_rows(rows: list[PriceImportRow]) -> list[PriceImportRow]:
     unique_rows: list[PriceImportRow] = []
-    seen: set[tuple[str, float | None, str, str]] = set()
+    seen: set[tuple[str, float | None, str, str, str]] = set()
     for row in rows:
         identity = compact(row.sku or row.name)
-        key = (identity, row.unit_cost, compact(row.vendor), compact(row.region))
+        key = (identity, row.unit_cost, compact(row.vendor), compact(row.region), compact(row.price_tier))
         if identity and key in seen:
             continue
         if identity:
@@ -212,8 +314,9 @@ def value(row: list[str], mapping: dict[str, int | None], field: str) -> str:
     return normalize(row[index]) if index is not None and index < len(row) else ""
 
 
-def table_to_rows(table: ParsedTable, default_vendor: str, default_region: str, source: str) -> list[PriceImportRow]:
+def table_to_rows(table: ParsedTable, default_vendor: str, default_region: str, source: str, default_price_tier: str = "auto") -> list[PriceImportRow]:
     mapping = detect_mapping(table.headers, table.rows)
+    price_columns = detect_price_columns(table.headers, table.rows, mapping)
     parsed_rows: list[PriceImportRow] = []
 
     for index, row in enumerate(table.rows, start=2):
@@ -224,39 +327,55 @@ def table_to_rows(table: ParsedTable, default_vendor: str, default_region: str, 
         unit = value(row, mapping, "unit") or "each"
         vendor = value(row, mapping, "vendor") or default_vendor
         region = value(row, mapping, "region") or default_region
-        price_text = value(row, mapping, "unit_cost") or " ".join(row)
-        unit_cost = parse_price(price_text)
+        row_price_columns = price_columns or [mapping["unit_cost"]]
+        row_prices: list[tuple[str, str, float | None]] = []
+        for price_column in row_price_columns:
+            if price_column is None or price_column >= len(row):
+                continue
+            price_header = table.headers[price_column] if price_column < len(table.headers) else "Price"
+            price_text = normalize(row[price_column])
+            row_prices.append((price_header, price_text, parse_price(price_text)))
+        if not row_prices:
+            row_prices.append(("Price", " ".join(row), parse_price(" ".join(row))))
         errors = []
         if not name:
             errors.append("Missing item name or model")
-        if unit_cost is None:
-            errors.append("Missing valid price")
         if not vendor:
             errors.append("Missing vendor")
 
         if sku and name == sku and not re.search(r"\d", sku):
             continue
 
-        if name or sku or unit_cost is not None:
-            parsed_rows.append(
-                PriceImportRow(
-                    row_number=index,
-                    sku=sku or None,
-                    name=name,
-                    category=category.lower(),
-                    brand=brand,
-                    unit=unit,
-                    vendor=vendor,
-                    region=region,
-                    unit_cost=unit_cost,
-                    lead_time_days=parse_int(value(row, mapping, "lead_time_days")),
-                    quote_date=parse_date(value(row, mapping, "quote_date")),
-                    source=source,
-                    notes=None,
-                    confidence=min(1, 0.35 + (0.2 if sku else 0) + (0.2 if name else 0) + (0.25 if unit_cost is not None else 0) + (0.1 if vendor else 0)),
-                    errors=errors,
+        for price_header, _price_text, unit_cost in row_prices:
+            row_errors = list(errors)
+            if unit_cost is None:
+                row_errors.append("Missing valid price")
+            price_tier = infer_price_tier(price_header, source, default_tier=default_price_tier)
+            price_source = f"{source} - {price_header}" if price_header else source
+            if name or sku or unit_cost is not None:
+                confidence = min(1, 0.35 + (0.2 if sku else 0) + (0.2 if name else 0) + (0.25 if unit_cost is not None else 0) + (0.1 if vendor else 0))
+                if price_tier != "distributor":
+                    confidence = min(1, confidence + 0.05)
+                parsed_rows.append(
+                    PriceImportRow(
+                        row_number=index,
+                        sku=sku or None,
+                        name=name,
+                        category=category.lower(),
+                        brand=brand,
+                        unit=unit,
+                        vendor=vendor,
+                        region=region,
+                        price_tier=price_tier,
+                        unit_cost=unit_cost,
+                        lead_time_days=parse_int(value(row, mapping, "lead_time_days")),
+                        quote_date=parse_date(value(row, mapping, "quote_date")),
+                        source=price_source,
+                        notes=None,
+                        confidence=confidence,
+                        errors=row_errors,
+                    )
                 )
-            )
     return parsed_rows
 
 
@@ -319,6 +438,7 @@ def ai_schema() -> dict[str, Any]:
                         "unit": {"type": "string"},
                         "vendor": {"type": "string"},
                         "region": {"type": "string"},
+                        "price_tier": {"type": "string", "enum": ["distributor", "contractor", "ecommerce", "manufacturer"]},
                         "unit_cost": {"type": ["number", "null"]},
                         "lead_time_days": {"type": ["integer", "null"]},
                         "quote_date": {"type": "string"},
@@ -326,7 +446,7 @@ def ai_schema() -> dict[str, Any]:
                         "confidence": {"type": "number"},
                         "errors": {"type": "array", "items": {"type": "string"}},
                     },
-                    "required": ["row_number", "sku", "name", "category", "brand", "unit", "vendor", "region", "unit_cost", "lead_time_days", "quote_date", "notes", "confidence", "errors"],
+                    "required": ["row_number", "sku", "name", "category", "brand", "unit", "vendor", "region", "price_tier", "unit_cost", "lead_time_days", "quote_date", "notes", "confidence", "errors"],
                 },
             }
         },
@@ -338,6 +458,7 @@ def ai_prompt(rows: list[PriceImportRow], default_vendor: str, default_region: s
     payload = [row.model_dump(mode="json") for row in rows[:200]]
     return (
         "Normalize HVAC vendor price rows into clean JSON. Keep prices numeric. "
+        "Set price_tier to distributor, contractor, ecommerce, or manufacturer based on the price column/header. "
         "Use defaults when missing: vendor=" + default_vendor + ", region=" + default_region + ". "
         "Return only rows that look like price records. Source file: " + source + "\n\n" + json.dumps(payload, ensure_ascii=False)
     )
@@ -348,6 +469,7 @@ def rows_from_ai_json(text: str, source: str) -> list[PriceImportRow]:
     normalized = []
     for item in data.get("rows", []):
         item["quote_date"] = parse_date(str(item.get("quote_date") or ""))
+        item["price_tier"] = normalize_price_tier(item.get("price_tier"))
         normalized.append(PriceImportRow(**item, source=source))
     return normalized
 
@@ -431,7 +553,7 @@ def ai_normalize_rows(rows: list[PriceImportRow], default_vendor: str, default_r
     return normalized, used, "ollama" if used else "rules"
 
 
-def parse_price_file(filename: str, content: bytes, default_vendor: str = "Imported", default_region: str = "default", ai_provider: str | None = None) -> tuple[list[PriceImportRow], bool, str]:
+def parse_price_file(filename: str, content: bytes, default_vendor: str = "Imported", default_region: str = "default", ai_provider: str | None = None, default_price_tier: str = "auto") -> tuple[list[PriceImportRow], bool, str]:
     extension = Path(filename).suffix.lower()
     if extension == ".csv":
         tables = [parse_csv_like(content, ",")]
@@ -447,7 +569,7 @@ def parse_price_file(filename: str, content: bytes, default_vendor: str = "Impor
     rows: list[PriceImportRow] = []
     for table in tables:
         source = f"{filename} - {table.source_label}" if table.source_label else filename
-        rows.extend(table_to_rows(table, default_vendor, default_region, source))
+        rows.extend(table_to_rows(table, default_vendor, default_region, source, default_price_tier))
     rows = dedupe_rows(rows)
     return ai_normalize_rows(rows, default_vendor, default_region, filename, ai_provider)
 
@@ -476,6 +598,7 @@ def import_rows(db: Session, rows: list[PriceImportRow]) -> dict[str, int]:
                 item_id=item.id,
                 vendor=row.vendor,
                 region=row.region,
+                price_tier=row.price_tier,
                 unit_cost=row.unit_cost,
                 lead_time_days=row.lead_time_days,
                 quote_date=row.quote_date,

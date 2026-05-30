@@ -23,6 +23,7 @@ class VendorQuoteIn(BaseModel):
     item_id: int
     vendor: str
     region: str = "default"
+    price_tier: str = "distributor"
     unit_cost: float
     lead_time_days: int | None = None
     quote_date: date = Field(default_factory=date.today)
@@ -82,6 +83,7 @@ class PriceImportRow(BaseModel):
     unit: str = "each"
     vendor: str
     region: str = "default"
+    price_tier: str = "distributor"
     unit_cost: float | None = None
     lead_time_days: int | None = None
     quote_date: date = Field(default_factory=date.today)

@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react'
 const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8000'
 
 type AnalysisChannel = 'rules' | 'openai' | 'ollama'
+type PriceTier = 'auto' | 'distributor' | 'contractor' | 'ecommerce' | 'manufacturer'
 
 type ImportRow = {
   row_number: number
@@ -17,6 +18,7 @@ type ImportRow = {
   unit: string
   vendor: string
   region: string
+  price_tier: Exclude<PriceTier, 'auto'> | string
   unit_cost: number | null
   source: string | null
   confidence: number
@@ -48,6 +50,14 @@ function money(value: number | null | undefined) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
 }
 
+const tierLabels: Record<string, string> = {
+  auto: 'Auto-detect',
+  distributor: 'Distributor',
+  contractor: 'Contractor',
+  ecommerce: 'Ecommerce',
+  manufacturer: 'Manufacturer',
+}
+
 function compactSource(source: string | null | undefined) {
   if (!source) return 'Upload'
   return source.split(' - ').slice(-2).join(' - ')
@@ -70,6 +80,7 @@ export default function ImportPage() {
   const [file, setFile] = useState<File | null>(null)
   const [vendor, setVendor] = useState('Imported Vendor')
   const [region, setRegion] = useState('DFW')
+  const [defaultPriceTier, setDefaultPriceTier] = useState<PriceTier>('auto')
   const [analysisChannel, setAnalysisChannel] = useState<AnalysisChannel>('rules')
   const [commit, setCommit] = useState(false)
   const [status, setStatus] = useState('Choose a price sheet to preview or import.')
@@ -82,6 +93,7 @@ export default function ImportPage() {
     form.append('file', file)
     form.append('vendor', vendor)
     form.append('region', region)
+    form.append('price_tier', defaultPriceTier)
     form.append('ai_provider', analysisChannel)
     form.append('commit', String(commit))
 
@@ -112,11 +124,13 @@ export default function ImportPage() {
       .slice(0, 6)
     const sourceCounts = Object.entries(countBy(validRows.map((row) => compactSource(row.source))))
       .sort((a, b) => b[1] - a[1])
+    const tierCounts = Object.entries(countBy(validRows.map((row) => tierLabels[row.price_tier] ?? row.price_tier ?? 'Distributor')))
+      .sort((a, b) => b[1] - a[1])
     const categoryCounts = Object.entries(countBy(validRows.map((row) => row.category || 'uncategorized')))
       .sort((a, b) => b[1] - a[1])
     const range = max != null && min != null ? max - min : null
     const conclusion = validRows.length
-      ? `${validRows.length} valid prices across ${familyCounts.length} model groups; ${compactSource(sourceCounts[0]?.[0])} contributes the largest share.`
+      ? `${validRows.length} valid prices across ${familyCounts.length} model groups; ${tierCounts[0]?.[0] ?? 'Distributor'} is the largest price tier.`
       : 'Upload a file to generate coverage, price range, and model group analysis.'
     return {
       avg,
@@ -128,6 +142,7 @@ export default function ImportPage() {
       highest: sorted.slice(-3).reverse(),
       familyCounts,
       sourceCounts,
+      tierCounts,
       categoryCounts,
       conclusion,
     }
@@ -158,6 +173,16 @@ export default function ImportPage() {
             <label><span>Default vendor</span><input value={vendor} onChange={(event) => setVendor(event.target.value)} /></label>
             <label><span>Default region</span><input value={region} onChange={(event) => setRegion(event.target.value)} /></label>
             <label>
+              <span>Default price tier</span>
+              <select value={defaultPriceTier} onChange={(event) => setDefaultPriceTier(event.target.value as PriceTier)}>
+                <option value="auto">Auto-detect from headers</option>
+                <option value="distributor">Distributor price</option>
+                <option value="contractor">Contractor price</option>
+                <option value="ecommerce">Ecommerce price</option>
+                <option value="manufacturer">Manufacturer price</option>
+              </select>
+            </label>
+            <label>
               <span>Price analysis channel</span>
               <select value={analysisChannel} onChange={(event) => setAnalysisChannel(event.target.value as AnalysisChannel)}>
                 <option value="rules">Rules parser</option>
@@ -184,6 +209,7 @@ export default function ImportPage() {
             <div><span>Invalid</span><strong>{result?.invalid_rows ?? 0}</strong></div>
             <div><span>Channel</span><strong>{channelLabels[result?.ai_provider ?? analysisChannel] ?? result?.ai_provider ?? 'Rules'}</strong></div>
             <div><span>AI used</span><strong>{result?.ai_used ? 'Yes' : 'No'}</strong></div>
+            <div><span>Top tier</span><strong>{analysis.tierCounts[0]?.[0] ?? '-'}</strong></div>
             <div><span>Average</span><strong>{money(analysis.avg)}</strong></div>
             <div><span>Min / Max</span><strong>{money(analysis.min)} / {money(analysis.max)}</strong></div>
             <div><span>Range</span><strong>{money(analysis.range)}</strong></div>
@@ -241,6 +267,25 @@ export default function ImportPage() {
           <div className="panel">
             <div className="panel-head compact-head">
               <div>
+                <h2>Tier Mix</h2>
+                <p>Captured price levels</p>
+              </div>
+              <Layers size={20} />
+            </div>
+            <div className="bar-list">
+              {analysis.tierCounts.map(([label, count]) => (
+                <div className="bar-row" key={label}>
+                  <span>{label}</span>
+                  <div><i style={{ width: `${(count / Math.max(...analysis.tierCounts.map((item) => item[1]), 1)) * 100}%` }} /></div>
+                  <strong>{count}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-head compact-head">
+              <div>
                 <h2>Price Extremes</h2>
                 <p>Lowest and highest captured prices</p>
               </div>
@@ -271,7 +316,7 @@ export default function ImportPage() {
           <table>
             <thead>
               <tr>
-                <th>Row</th><th>SKU</th><th>Name</th><th>Category</th><th>Brand</th><th>Source</th><th>Price</th><th>Confidence</th><th>Errors</th>
+                <th>Row</th><th>SKU</th><th>Name</th><th>Category</th><th>Brand</th><th>Tier</th><th>Source</th><th>Price</th><th>Confidence</th><th>Errors</th>
               </tr>
             </thead>
             <tbody>
@@ -282,13 +327,14 @@ export default function ImportPage() {
                   <td><strong>{row.name || '-'}</strong><span>{row.unit}</span></td>
                   <td>{row.category}</td>
                   <td>{row.brand || '-'}</td>
+                  <td><span className={`tier-pill tier-${row.price_tier || 'distributor'}`}>{tierLabels[row.price_tier] ?? row.price_tier}</span></td>
                   <td>{compactSource(row.source)}</td>
                   <td>{money(row.unit_cost)}</td>
                   <td>{Math.round(row.confidence * 100)}%</td>
                   <td>{row.errors.join(', ') || '-'}</td>
                 </tr>
               ))}
-              {!result && <tr><td colSpan={9}>Parsed rows will appear here.</td></tr>}
+              {!result && <tr><td colSpan={10}>Parsed rows will appear here.</td></tr>}
             </tbody>
           </table>
         </div>

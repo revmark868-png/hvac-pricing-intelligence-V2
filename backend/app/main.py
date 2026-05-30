@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -21,6 +21,19 @@ from .schemas import (
 )
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_schema() -> None:
+    inspector = inspect(engine)
+    if "vendor_quotes" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("vendor_quotes")}
+    if "price_tier" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE vendor_quotes ADD COLUMN price_tier VARCHAR(60) DEFAULT 'distributor'"))
+
+
+ensure_schema()
 
 app = FastAPI(title="HVAC Pricing Intelligence AI API")
 
@@ -140,6 +153,7 @@ async def import_prices(
     file: UploadFile = File(...),
     vendor: str = Form("Imported"),
     region: str = Form("default"),
+    price_tier: str = Form("auto"),
     ai_provider: str = Form("rules"),
     commit: bool = Form(False),
     db: Session = Depends(get_db),
@@ -149,7 +163,7 @@ async def import_prices(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        rows, ai_used, provider_used = parse_price_file(file.filename or "upload", content, vendor, region, ai_provider)
+        rows, ai_used, provider_used = parse_price_file(file.filename or "upload", content, vendor, region, ai_provider, price_tier)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

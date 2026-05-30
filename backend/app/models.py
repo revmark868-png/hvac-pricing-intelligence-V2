@@ -28,6 +28,7 @@ class VendorQuote(Base):
     item_id: Mapped[int] = mapped_column(ForeignKey("price_items.id", ondelete="CASCADE"), index=True)
     vendor: Mapped[str] = mapped_column(String(180), index=True)
     region: Mapped[str] = mapped_column(String(100), default="default", index=True)
+    price_tier: Mapped[str] = mapped_column(String(60), default="distributor", index=True)
     unit_cost: Mapped[float] = mapped_column(Float)
     lead_time_days: Mapped[int | None] = mapped_column(Integer)
     quote_date: Mapped[date] = mapped_column(Date, default=date.today, index=True)
