@@ -107,6 +107,16 @@ def score_header_row(row: list[str]) -> int:
     return score
 
 
+def header_alias_score(row: list[str]) -> int:
+    score = 0
+    for cell in [compact(cell) for cell in row]:
+        for aliases in FIELD_ALIASES.values():
+            if any(alias in cell for alias in aliases):
+                score += 1
+                break
+    return score
+
+
 def choose_header(rows: list[list[str]]) -> ParsedTable:
     rows = [[normalize(cell) for cell in row] for row in rows if any(normalize(cell) for cell in row)]
     if not rows:
@@ -131,6 +141,26 @@ def with_source_label(table: ParsedTable, source_label: str) -> ParsedTable:
     return table
 
 
+def split_tables(rows: list[list[str]]) -> list[ParsedTable]:
+    rows = [[normalize(cell) for cell in row] for row in rows]
+    header_indexes = [
+        index
+        for index, row in enumerate(rows)
+        if any(row) and header_alias_score(row) >= 2
+    ]
+    if not header_indexes:
+        table = choose_header(rows)
+        return [table] if table.headers or table.rows else []
+
+    tables: list[ParsedTable] = []
+    for table_number, header_index in enumerate(header_indexes, start=1):
+        next_header_index = header_indexes[table_number] if table_number < len(header_indexes) else len(rows)
+        table = choose_header(rows[header_index:next_header_index])
+        if table.headers or table.rows:
+            tables.append(with_source_label(table, f"table {table_number}"))
+    return tables
+
+
 def detect_mapping(headers: list[str], rows: list[list[str]]) -> dict[str, int | None]:
     mapping: dict[str, int | None] = {field: None for field in FIELD_ALIASES}
     normalized_headers = [compact(header) for header in headers]
@@ -140,9 +170,12 @@ def detect_mapping(headers: list[str], rows: list[list[str]]) -> dict[str, int |
         best_score = 0
         best_index: int | None = None
         for index, header in enumerate(normalized_headers):
+            if field == "unit" and any(token in header for token in ("price", "cost", "价格", "单价", "成本")):
+                continue
             score = sum(1 for alias in alias_tokens if alias and alias in header)
             if field == "unit_cost":
-                score += sum(1 for row in rows[:20] if index < len(row) and parse_price(row[index]) is not None)
+                if score:
+                    score = (score * 100) + sum(1 for row in rows[:20] if index < len(row) and parse_price(row[index]) is not None)
             if score > best_score:
                 best_score = score
                 best_index = index
@@ -158,6 +191,20 @@ def detect_mapping(headers: list[str], rows: list[list[str]]) -> dict[str, int |
             mapping["unit_cost"] = best_index
 
     return mapping
+
+
+def dedupe_rows(rows: list[PriceImportRow]) -> list[PriceImportRow]:
+    unique_rows: list[PriceImportRow] = []
+    seen: set[tuple[str, float | None, str, str]] = set()
+    for row in rows:
+        identity = compact(row.sku or row.name)
+        key = (identity, row.unit_cost, compact(row.vendor), compact(row.region))
+        if identity and key in seen:
+            continue
+        if identity:
+            seen.add(key)
+        unique_rows.append(row)
+    return unique_rows
 
 
 def value(row: list[str], mapping: dict[str, int | None], field: str) -> str:
@@ -186,6 +233,9 @@ def table_to_rows(table: ParsedTable, default_vendor: str, default_region: str, 
             errors.append("Missing valid price")
         if not vendor:
             errors.append("Missing vendor")
+
+        if sku and name == sku and not re.search(r"\d", sku):
+            continue
 
         if name or sku or unit_cost is not None:
             parsed_rows.append(
@@ -224,9 +274,9 @@ def parse_excel_tables(content: bytes) -> list[ParsedTable]:
         if sheet.sheet_state != "visible":
             continue
         rows = [[normalize(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
-        table = choose_header(rows)
-        if table.headers or table.rows:
-            tables.append(with_source_label(table, sheet.title))
+        for table in split_tables(rows):
+            source_label = f"{sheet.title} - {table.source_label}" if table.source_label else sheet.title
+            tables.append(with_source_label(table, source_label))
     return tables
 
 
@@ -398,6 +448,7 @@ def parse_price_file(filename: str, content: bytes, default_vendor: str = "Impor
     for table in tables:
         source = f"{filename} - {table.source_label}" if table.source_label else filename
         rows.extend(table_to_rows(table, default_vendor, default_region, source))
+    rows = dedupe_rows(rows)
     return ai_normalize_rows(rows, default_vendor, default_region, filename, ai_provider)
 
 
