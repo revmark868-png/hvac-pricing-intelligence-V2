@@ -1,3 +1,5 @@
+import os
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -22,9 +24,15 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="HVAC Pricing Intelligence AI API")
 
+frontend_origins = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=frontend_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

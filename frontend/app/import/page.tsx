@@ -66,8 +66,15 @@ export default function ImportPage() {
     form.append('ai_provider', analysisChannel)
     form.append('commit', String(commit))
 
-    const res = await fetch(`${apiBase}/imports/prices`, { method: 'POST', body: form })
-    const data = await res.json()
+    let res: Response
+    try {
+      res = await fetch(`${apiBase}/imports/prices`, { method: 'POST', body: form })
+    } catch (error) {
+      throw new Error(`Cannot reach the backend at ${apiBase}. Make sure the FastAPI server is running and this site is allowed by backend CORS settings.`)
+    }
+
+    const data = await res.json().catch(() => null)
+    if (!data) throw new Error(`Backend returned ${res.status} without a JSON response`)
     if (!res.ok) throw new Error(data.detail || 'Import failed')
     setResult(data)
     setStatus(data.imported ? `Imported ${data.created_quotes} quotes` : `Previewed ${data.total_rows} rows`)

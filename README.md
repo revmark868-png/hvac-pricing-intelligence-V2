@@ -37,6 +37,12 @@ Open:
 - Import page: http://localhost:3000/import
 - API docs: http://localhost:8000/docs
 
+If upload shows `Cannot reach the backend` or `failed to fetch`, check:
+
+- FastAPI is running on port `8000`.
+- `NEXT_PUBLIC_API_BASE` points to that backend URL.
+- `FRONTEND_ORIGINS` includes the frontend URL, for example `http://localhost:3000`.
+
 ## Price Analysis Channels
 
 The import page lets you choose one of three channels for every upload:
