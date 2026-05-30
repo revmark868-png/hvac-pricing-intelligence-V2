@@ -42,6 +42,7 @@ PRICE_RE = re.compile(r"(?<![A-Za-z0-9])[$¥￥]?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0
 class ParsedTable:
     headers: list[str]
     rows: list[list[str]]
+    source_label: str | None = None
 
 
 def normalize(value: Any) -> str:
@@ -123,6 +124,11 @@ def choose_header(rows: list[list[str]]) -> ParsedTable:
     headers = pad_rows([rows[header_index]], width)[0]
     headers = [header or f"Column {index + 1}" for index, header in enumerate(headers)]
     return ParsedTable(headers=headers, rows=pad_rows(rows[header_index + 1 :], width))
+
+
+def with_source_label(table: ParsedTable, source_label: str) -> ParsedTable:
+    table.source_label = source_label
+    return table
 
 
 def detect_mapping(headers: list[str], rows: list[list[str]]) -> dict[str, int | None]:
@@ -209,21 +215,28 @@ def parse_csv_like(content: bytes, delimiter: str) -> ParsedTable:
     return choose_header(list(csv.reader(io.StringIO(text), delimiter=delimiter)))
 
 
-def parse_excel(content: bytes) -> ParsedTable:
+def parse_excel_tables(content: bytes) -> list[ParsedTable]:
     from openpyxl import load_workbook
 
     workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    sheet = workbook[workbook.sheetnames[0]]
-    rows = [[normalize(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
-    return choose_header(rows)
+    tables: list[ParsedTable] = []
+    for sheet in workbook.worksheets:
+        if sheet.sheet_state != "visible":
+            continue
+        rows = [[normalize(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
+        table = choose_header(rows)
+        if table.headers or table.rows:
+            tables.append(with_source_label(table, sheet.title))
+    return tables
 
 
-def parse_pdf(content: bytes) -> ParsedTable:
+def parse_pdf_tables(content: bytes) -> list[ParsedTable]:
     import pdfplumber
 
-    rows: list[list[str]] = []
+    tables: list[ParsedTable] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         for page in pdf.pages:
+            rows: list[list[str]] = []
             for table in page.extract_tables() or []:
                 rows.extend([[normalize(cell) for cell in row] for row in table])
             text = page.extract_text() or ""
@@ -231,7 +244,10 @@ def parse_pdf(content: bytes) -> ParsedTable:
                 cells = [part for part in re.split(r"\s{2,}|\t+", line.strip()) if part]
                 if len(cells) >= 2 and any(parse_price(cell) is not None for cell in cells):
                     rows.append(cells)
-    return choose_header(rows)
+            table = choose_header(rows)
+            if table.headers or table.rows:
+                tables.append(with_source_label(table, f"page {page.page_number}"))
+    return tables
 
 
 def ai_schema() -> dict[str, Any]:
@@ -368,17 +384,20 @@ def ai_normalize_rows(rows: list[PriceImportRow], default_vendor: str, default_r
 def parse_price_file(filename: str, content: bytes, default_vendor: str = "Imported", default_region: str = "default", ai_provider: str | None = None) -> tuple[list[PriceImportRow], bool, str]:
     extension = Path(filename).suffix.lower()
     if extension == ".csv":
-        table = parse_csv_like(content, ",")
+        tables = [parse_csv_like(content, ",")]
     elif extension == ".tsv":
-        table = parse_csv_like(content, "\t")
+        tables = [parse_csv_like(content, "\t")]
     elif extension in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
-        table = parse_excel(content)
+        tables = parse_excel_tables(content)
     elif extension == ".pdf":
-        table = parse_pdf(content)
+        tables = parse_pdf_tables(content)
     else:
         raise ValueError("Unsupported file type. Upload .xlsx, .csv, .tsv, or .pdf.")
 
-    rows = table_to_rows(table, default_vendor, default_region, filename)
+    rows: list[PriceImportRow] = []
+    for table in tables:
+        source = f"{filename} - {table.source_label}" if table.source_label else filename
+        rows.extend(table_to_rows(table, default_vendor, default_region, source))
     return ai_normalize_rows(rows, default_vendor, default_region, filename, ai_provider)
 
 
